@@ -4,7 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function Dashboard() {
-  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:8080";
+  const BASE_URL =
+    process.env.NEXT_PUBLIC_BASE_URL ??
+    process.env.NEXT_PUBLIC_API_URL ??
+    "http://localhost:8080";
   const [roomID, setRoomID] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [connectingAction, setConnectingAction] = useState<"create" | "join" | null>(null);

@@ -8,7 +8,10 @@ type RoomClient = {
 };
 
 export default function WaitingPage() {
-  const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:8080";
+  const BASE_URL =
+    process.env.NEXT_PUBLIC_BASE_URL ??
+    process.env.NEXT_PUBLIC_API_URL ??
+    "http://localhost:8080";
   const WS_BASE_URL = BASE_URL.replace(/^http/, "ws");
   //   const [roomID, setRoomID] = useState("");
   const pcRef = useRef<RTCPeerConnection | null>(null);
