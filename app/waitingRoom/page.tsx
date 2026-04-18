@@ -7,6 +7,13 @@ type RoomClient = {
   clientId: string;
 };
 
+type TurnCredentialsResponse = {
+  username: string;
+  credential: string;
+  urls: string[];
+  ttl: number;
+};
+
 export default function WaitingPage() {
   const BASE_URL =
     process.env.NEXT_PUBLIC_BASE_URL ??
@@ -111,12 +118,10 @@ export default function WaitingPage() {
         throw new Error("WebSocket not initialized");
       }
 
+      const iceServers = await getIceServers();
+
       const pc = new RTCPeerConnection({
-        iceServers: [
-          {
-            urls: "stun:stun.l.google.com:19302",
-          },
-        ],
+        iceServers,
       });
 
       localStreamRef.current.getTracks().forEach((track) => {
@@ -139,6 +144,12 @@ export default function WaitingPage() {
         } else {
           return;
         }
+      };
+
+      pc.onconnectionstatechange = () => {
+        console.log(
+          `Peer ${peerId} connection state: ${pc.connectionState} | ICE state: ${pc.iceConnectionState}`,
+        );
       };
 
       pcRef.current = pc;
@@ -192,6 +203,56 @@ export default function WaitingPage() {
       await pc.addIceCandidate(candidate);
     } catch (error) {
       console.error("Failed to add ICE candidate:", error);
+    }
+  }
+
+  async function getIceServers(): Promise<RTCIceServer[]> {
+    const fallbackServers: RTCIceServer[] = [
+      {
+        urls: "stun:stun.l.google.com:19302",
+      },
+    ];
+
+    if (!roomId || !clientId) {
+      return fallbackServers;
+    }
+
+    try {
+      const res = await fetch(
+        `${BASE_URL}/room/${roomId}/${clientId}/turn-credentials`,
+        {
+          headers: {
+            Authorization: `Bearer ${getAccessToken() ?? ""}`,
+          },
+        },
+      );
+
+      if (!res.ok) {
+        const txt = await res.text();
+        console.warn(
+          `TURN credentials unavailable (${res.status}). Falling back to STUN only. ${txt}`,
+        );
+        return fallbackServers;
+      }
+
+      const turn = (await res.json()) as TurnCredentialsResponse;
+      if (!turn.urls?.length || !turn.username || !turn.credential) {
+        return fallbackServers;
+      }
+
+      return [
+        {
+          urls: "stun:stun.l.google.com:19302",
+        },
+        {
+          urls: turn.urls,
+          username: turn.username,
+          credential: turn.credential,
+        },
+      ];
+    } catch (error) {
+      console.warn("Failed fetching TURN credentials, using STUN only", error);
+      return fallbackServers;
     }
   }
 
@@ -262,13 +323,17 @@ export default function WaitingPage() {
             console.log("A new user has joined the room !!");
             console.log(message.payload);
 
-            const joinedPeerId: string | undefined = message?.payload?.newClientId;
+            const joinedPeerId: string | undefined =
+              message?.payload?.newClientId;
             if (!joinedPeerId || joinedPeerId === clientId) {
               break;
             }
 
             if (!targetPeersRef.current.includes(joinedPeerId)) {
-              targetPeersRef.current = [...targetPeersRef.current, joinedPeerId];
+              targetPeersRef.current = [
+                ...targetPeersRef.current,
+                joinedPeerId,
+              ];
             }
 
             peerConnectedRef.current.set(joinedPeerId, false);
@@ -459,7 +524,7 @@ export default function WaitingPage() {
 
   useEffect(() => {
     try {
-      if(hasInitializedRef.current) return;
+      if (hasInitializedRef.current) return;
       hasInitializedRef.current = true;
       settingRTCEnvironment();
     } catch (error) {
@@ -480,21 +545,21 @@ export default function WaitingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [otherPeers, clientId]);
 
-  useEffect(()=>{
-    function handleLeave(){
-      if(!clientId) return;
+  useEffect(() => {
+    function handleLeave() {
+      if (!clientId) return;
 
       //Send a socket event to all other peers;
       sendMessage({
-        type:"signal",
-        payload:{
-          action : "leave",
+        type: "signal",
+        payload: {
+          action: "leave",
           //leaving clientId, roomId
-        }
+        },
         // to:
       });
 
-      peerConnectionsRef.current.forEach((pc)=>{
+      peerConnectionsRef.current.forEach((pc) => {
         pc.onicecandidate = null;
         pc.ontrack = null;
         pc.onsignalingstatechange = null;
@@ -507,24 +572,24 @@ export default function WaitingPage() {
 
     window.addEventListener("pagehide", handleLeave);
 
-    return ()=>{
+    return () => {
       window.removeEventListener("pagehide", handleLeave);
-    }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[]);
+  }, []);
 
-  useEffect(()=>{
-    return()=>{
-      if(!wsRef.current) return;
+  useEffect(() => {
+    return () => {
+      if (!wsRef.current) return;
       wsRef.current.onopen = null;
       wsRef.current.onerror = null;
       wsRef.current.onmessage = null;
       wsRef.current.onclose = null;
-      
+
       wsRef.current.close();
       wsRef.current = null;
-    }
-  },[])
+    };
+  }, []);
 
   const shortId = (id: string | null) => {
     if (!id) return "unknown";
@@ -541,8 +606,12 @@ export default function WaitingPage() {
         <div className="rounded-2xl border border-slate-700 bg-slate-900/90 px-4 py-4 shadow-xl shadow-black/30 sm:px-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Room Session</p>
-              <p className="mt-1 font-mono text-sm text-cyan-200 sm:text-base">{roomId || "unknown"}</p>
+              <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
+                Room Session
+              </p>
+              <p className="mt-1 font-mono text-sm text-cyan-200 sm:text-base">
+                {roomId || "unknown"}
+              </p>
             </div>
 
             <div className="flex items-center gap-2">
@@ -557,7 +626,10 @@ export default function WaitingPage() {
 
           <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-700/70 pt-4">
             <div className="rounded-md border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs text-slate-300 sm:text-sm">
-              You: <span className="font-mono text-slate-100">{shortId(clientId)}</span>
+              You:{" "}
+              <span className="font-mono text-slate-100">
+                {shortId(clientId)}
+              </span>
             </div>
 
             <button
